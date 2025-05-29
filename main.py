@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 PDF Merger Pro - Приложение для объединения PDF файлов
-Версия: 2.1
+Версия: 2.2
 Автор: PDF Merger Team
 
 Главный файл запуска приложения
@@ -62,7 +62,7 @@ def setup_application():
 
     # Настройки приложения
     app.setApplicationName("PDF Merger Pro")
-    app.setApplicationVersion("2.1")
+    app.setApplicationVersion("2.2")
     app.setOrganizationName("PDF Merger Team")
 
     # Установка иконки приложения
@@ -86,7 +86,7 @@ def setup_application():
 
 def main():
     """Главная функция приложения."""
-    print("🚀 Запуск PDF Merger Pro v2.1")
+    print("🚀 Запуск PDF Merger Pro v2.2")
 
     # Проверяем зависимости
     deps_ok, deps_message = check_dependencies()

@@ -10,13 +10,13 @@ from PyQt6.QtGui import QDragEnterEvent, QDropEvent
 
 class PDFListWidget(QListWidget):
     """Список PDF файлов с поддержкой drag & drop."""
-    
+
     def __init__(self):
         super().__init__()
         self.setAcceptDrops(True)
         self.setDragDropMode(QListWidget.DragDropMode.InternalMove)
         self.setDefaultDropAction(Qt.DropAction.MoveAction)
-        
+
         # Улучшенный placeholder для пустого списка
         self.setStyleSheet("""
             QListWidget {
@@ -33,9 +33,9 @@ class PDFListWidget(QListWidget):
                 background-color: #f8f9fa;
             }
         """)
-        
+
         # Добавляем placeholder текст
-        self.placeholder_text = "📁 Перетащите PDF файлы сюда\nили используйте кнопку 'Добавить файлы'"
+        self.placeholder_text = "📁 Перетащите файлы сюда\n(PDF, Word, изображения, текст)\nили используйте кнопку 'Добавить файлы'"
         self.update_placeholder()
 
     def update_placeholder(self):
@@ -90,10 +90,14 @@ class PDFListWidget(QListWidget):
         mime_data = event.mimeData()
         if mime_data and mime_data.hasUrls():
             files = []
+            # Поддерживаемые расширения
+            supported_extensions = ['.pdf', '.doc', '.docx', '.txt', '.jpg', '.jpeg', '.png', '.bmp']
+
             for url in mime_data.urls():
                 if url.isLocalFile():
                     file_path = url.toLocalFile()
-                    if file_path.lower().endswith('.pdf'):
+                    # Проверяем расширение файла
+                    if any(file_path.lower().endswith(ext) for ext in supported_extensions):
                         files.append(file_path)
 
             if files:
@@ -115,16 +119,16 @@ class PDFListWidget(QListWidget):
 
 class StatusWidget(QLabel):
     """Виджет для отображения статуса с иконкой."""
-    
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setObjectName('status')
         self.setText('Готов к работе')
-    
+
     def set_status(self, text, status_type='info'):
         """Устанавливает статус с соответствующим стилем."""
         self.setText(text)
-        
+
         color_map = {
             'info': '#17a2b8',
             'success': '#28a745',
@@ -132,7 +136,7 @@ class StatusWidget(QLabel):
             'error': '#dc3545',
             'processing': '#6f42c1'
         }
-        
+
         color = color_map.get(status_type, '#17a2b8')
         self.setStyleSheet(f"""
             QLabel#status {{
@@ -150,7 +154,7 @@ class StatusWidget(QLabel):
 
 class FileCountWidget(QLabel):
     """Виджет для отображения количества файлов."""
-    
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setStyleSheet("""
@@ -162,11 +166,11 @@ class FileCountWidget(QLabel):
             border-radius: 4px;
         """)
         self.update_count(0)
-    
+
     def update_count(self, count):
         """Обновляет отображение количества файлов."""
         self.setText(f'Файлов: {count}')
-        
+
         # Меняем цвет в зависимости от количества
         if count == 0:
             bg_color = '#e9ecef'
@@ -177,7 +181,7 @@ class FileCountWidget(QLabel):
         else:
             bg_color = '#d4edda'
             text_color = '#155724'
-        
+
         self.setStyleSheet(f"""
             color: {text_color};
             font-size: 12px;
@@ -190,18 +194,18 @@ class FileCountWidget(QLabel):
 
 class CompactButton:
     """Фабрика для создания компактных кнопок."""
-    
+
     @staticmethod
     def create_button(text, icon_name=None, color='#495057', style_type='normal'):
         """Создает кнопку с заданными параметрами."""
         from PyQt6.QtWidgets import QPushButton
         import qtawesome as qta
-        
+
         button = QPushButton(text)
-        
+
         if icon_name:
             button.setIcon(qta.icon(icon_name, color=color))
-        
+
         style_map = {
             'success': {'border': '#28a745', 'hover': '#28a745'},
             'info': {'border': '#17a2b8', 'hover': '#17a2b8'},
@@ -209,9 +213,9 @@ class CompactButton:
             'danger': {'border': '#dc3545', 'hover': '#dc3545'},
             'normal': {'border': '#e9ecef', 'hover': '#6c757d'}
         }
-        
+
         style = style_map.get(style_type, style_map['normal'])
-        
+
         button.setStyleSheet(f"""
             QPushButton {{
                 border-color: {style['border']};
@@ -222,5 +226,5 @@ class CompactButton:
                 color: white;
             }}
         """)
-        
+
         return button

@@ -13,6 +13,7 @@ from .widgets import PDFListWidget, StatusWidget, FileCountWidget, CompactButton
 from .styles import APP_STYLES
 from .preview_dialogs import PDFPreviewDialog, MultiPreviewDialog
 from core.pdf_worker import PDFMergerWorker, PDFValidator, PDFInfo
+from core.file_converter import FileConverter
 
 
 class PDFMergerMainWindow(QMainWindow):
@@ -21,6 +22,8 @@ class PDFMergerMainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.worker = None
+        self.file_converter = FileConverter()
+        self.temp_files = []  # Список временных файлов для очистки
         self.init_ui()
         self.setup_connections()
 
@@ -69,7 +72,7 @@ class PDFMergerMainWindow(QMainWindow):
         header_layout.addStretch()
 
         # Информация о версии
-        version_label = QLabel('v2.1')
+        version_label = QLabel('v2.2')
         version_label.setStyleSheet("""
             color: #adb5bd;
             font-size: 12px;
@@ -83,7 +86,7 @@ class PDFMergerMainWindow(QMainWindow):
         main_layout.addLayout(header_layout)
 
         # Подзаголовок
-        subtitle_label = QLabel('Перетащите PDF файлы в область ниже или используйте кнопки для добавления')
+        subtitle_label = QLabel('Перетащите файлы (PDF, Word, изображения, текст) в область ниже или используйте кнопки')
         subtitle_label.setObjectName('subtitle')
         main_layout.addWidget(subtitle_label)
 
@@ -254,12 +257,13 @@ class PDFMergerMainWindow(QMainWindow):
         self.update_buttons()
 
     def add_files(self):
-        """Добавить PDF файлы."""
+        """Добавить файлы различных форматов."""
+        # Используем новый фильтр файлов с поддержкой различных форматов
         files, _ = QFileDialog.getOpenFileNames(
             self,
-            'Выберите PDF файлы',
+            'Выберите файлы для объединения',
             '',
-            'PDF файлы (*.pdf)'
+            FileConverter.get_file_filter()
         )
 
         if files:
@@ -272,22 +276,75 @@ class PDFMergerMainWindow(QMainWindow):
 
             # Добавляем только новые файлы
             added_count = 0
+            converted_count = 0
+
             for file_path in files:
                 if file_path not in existing_files:
-                    # Валидируем файл
-                    is_valid, message = PDFValidator.is_valid_pdf(file_path)
-                    if is_valid:
-                        self.file_list.addItem(file_path)
-                        added_count += 1
-                    else:
+                    # Проверяем поддержку формата
+                    if not FileConverter.is_supported_format(file_path):
                         QMessageBox.warning(
                             self,
-                            'Ошибка файла',
-                            f'Файл {os.path.basename(file_path)}:\n{message}'
+                            'Неподдерживаемый формат',
+                            f'Файл {os.path.basename(file_path)} имеет неподдерживаемый формат'
+                        )
+                        continue
+
+                    # Конвертируем файл в PDF если нужно
+                    success, result = self.file_converter.convert_to_pdf(file_path)
+
+                    if success:
+                        pdf_path = result
+
+                        # Если файл был сконвертирован (не оригинальный PDF)
+                        if pdf_path != file_path:
+                            converted_count += 1
+                            self.temp_files.append(pdf_path)
+
+                        # Валидируем получившийся PDF
+                        is_valid, message = PDFValidator.is_valid_pdf(pdf_path)
+                        if is_valid:
+                            # Добавляем оригинальный путь в список (для отображения)
+                            # но сохраняем путь к PDF для объединения
+                            self.file_list.addItem(file_path)
+                            added_count += 1
+                        else:
+                            QMessageBox.warning(
+                                self,
+                                'Ошибка файла',
+                                f'Файл {os.path.basename(file_path)}:\n{message}'
+                            )
+                            # Удаляем временный файл если он был создан
+                            if pdf_path != file_path and pdf_path in self.temp_files:
+                                self.temp_files.remove(pdf_path)
+                                try:
+                                    os.remove(pdf_path)
+                                except Exception:
+                                    pass
+                    else:
+                        # Ошибка конвертации
+                        error_message = result
+                        QMessageBox.warning(
+                            self,
+                            'Ошибка конвертации',
+                            f'Не удалось обработать файл {os.path.basename(file_path)}:\n{error_message}'
                         )
 
+            # Показываем результат
             if added_count > 0:
-                self.status_widget.set_status(f'Добавлено файлов: {added_count}', 'success')
+                status_msg = f'Добавлено файлов: {added_count}'
+                if converted_count > 0:
+                    status_msg += f' (сконвертировано: {converted_count})'
+                self.status_widget.set_status(status_msg, 'success')
+
+                # Показываем информацию о недостающих зависимостях
+                missing_deps = self.file_converter.get_missing_dependencies()
+                if missing_deps and converted_count == 0:
+                    QMessageBox.information(
+                        self,
+                        'Информация о зависимостях',
+                        f'Для полной поддержки конвертации установите:\n' +
+                        '\n'.join([f'• pip install {dep.split()[0].lower()}' for dep in missing_deps])
+                    )
 
     def remove_file(self):
         """Удалить выбранный файл."""
@@ -388,14 +445,37 @@ class PDFMergerMainWindow(QMainWindow):
 
     def merge_pdfs(self):
         """Объединить PDF файлы."""
-        file_paths = []
+        original_paths = []
+        pdf_paths = []
+
+        # Получаем пути к файлам и их PDF версиям
         for i in range(self.file_list.count()):
             item = self.file_list.item(i)
             if item:
-                file_paths.append(item.text())
+                original_path = item.text()
+                original_paths.append(original_path)
 
-        # Валидация
-        is_valid, message = PDFValidator.validate_file_list(file_paths)
+                # Если файл был сконвертирован, используем PDF версию
+                if original_path.lower().endswith('.pdf'):
+                    pdf_paths.append(original_path)
+                else:
+                    # Ищем соответствующий временный PDF файл
+                    success, pdf_path = self.file_converter.convert_to_pdf(original_path)
+                    if success:
+                        pdf_paths.append(pdf_path)
+                        # Добавляем в список временных файлов если еще нет
+                        if pdf_path not in self.temp_files:
+                            self.temp_files.append(pdf_path)
+                    else:
+                        QMessageBox.warning(
+                            self,
+                            'Ошибка конвертации',
+                            f'Не удалось подготовить файл {os.path.basename(original_path)} для объединения'
+                        )
+                        return
+
+        # Валидация PDF файлов
+        is_valid, message = PDFValidator.validate_file_list(pdf_paths)
         if not is_valid:
             QMessageBox.warning(self, 'Ошибка валидации', message)
             return
@@ -409,8 +489,8 @@ class PDFMergerMainWindow(QMainWindow):
         )
 
         if output_file:
-            # Запускаем рабочий поток
-            self.worker = PDFMergerWorker(file_paths, output_file)
+            # Запускаем рабочий поток с PDF файлами
+            self.worker = PDFMergerWorker(pdf_paths, output_file)
             self.worker.started.connect(self.merging_started)
             self.worker.finished.connect(self.merging_finished)
             self.worker.error.connect(self.merging_error)
@@ -454,7 +534,14 @@ class PDFMergerMainWindow(QMainWindow):
 
     def merging_started(self):
         """Слот, вызываемый при начале объединения."""
-        self.status_widget.set_status("Объединение файлов...", 'processing')
+        # Определяем, какая библиотека будет использоваться
+        try:
+            import fitz
+            merge_method = "PyMuPDF (оптимально для кирилицы)"
+        except ImportError:
+            merge_method = "PyPDF2 (базовый)"
+
+        self.status_widget.set_status(f"Объединение файлов ({merge_method})...", 'processing')
         self.status_icon.setPixmap(qta.icon('fa5s.spinner', color='#6f42c1').pixmap(16, 16))
         self.update_buttons()
 
@@ -464,6 +551,9 @@ class PDFMergerMainWindow(QMainWindow):
         self.status_widget.set_status("Объединение завершено успешно!", 'success')
         self.status_icon.setPixmap(qta.icon('fa5s.check-circle', color='#28a745').pixmap(16, 16))
         self.update_buttons()
+
+        # Очищаем временные файлы
+        self.cleanup_temp_files()
 
         # Улучшенное сообщение об успехе
         msg = QMessageBox(self)
@@ -481,6 +571,9 @@ class PDFMergerMainWindow(QMainWindow):
         self.status_icon.setPixmap(qta.icon('fa5s.exclamation-circle', color='#dc3545').pixmap(16, 16))
         self.update_buttons()
 
+        # Очищаем временные файлы
+        self.cleanup_temp_files()
+
         # Улучшенное сообщение об ошибке
         msg = QMessageBox(self)
         msg.setIcon(QMessageBox.Icon.Critical)
@@ -489,3 +582,21 @@ class PDFMergerMainWindow(QMainWindow):
         msg.setInformativeText(error_message)
         msg.setStandardButtons(QMessageBox.StandardButton.Ok)
         msg.exec()
+
+    def cleanup_temp_files(self):
+        """Очищает временные файлы."""
+        for temp_file in self.temp_files:
+            try:
+                if os.path.exists(temp_file):
+                    os.remove(temp_file)
+            except Exception as e:
+                print(f"Не удалось удалить временный файл {temp_file}: {e}")
+
+        self.temp_files.clear()
+        self.file_converter.cleanup_temp_files()
+
+    def closeEvent(self, event):
+        """Обработчик закрытия приложения."""
+        # Очищаем временные файлы при закрытии
+        self.cleanup_temp_files()
+        event.accept()
